@@ -1,0 +1,37 @@
+[project]
+name = "TeleSaurier"
+version = "0.1.0"
+description = "Eine Python Anwendung um Faxe bequem am PC zu versenden und zu empfangen."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = []
+
+[project.scripts]
+TeleSaurier = "src.main:main"
+main = "src.main:main"
+test = "pytest:main"
+build = "src.build:main"
+format = "src.tools:format_code"
+lint = "src.tools:lint_code"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pyinstaller>=6.0",
+    "ruff>=0.6",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src"]

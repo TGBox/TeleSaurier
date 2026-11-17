@@ -5,11 +5,14 @@ description = "Eine Python Anwendung um Faxe bequem am PC zu versenden und zu em
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
-dependencies = []
+dependencies = [
+    "pyside6>=6.6",
+]
 
 [project.scripts]
 TeleSaurier = "src.main:main"
 main = "src.main:main"
+server = "src.server.app:main"
 test = "pytest:main"
 build = "src.build:main"
 format = "src.tools:format_code"

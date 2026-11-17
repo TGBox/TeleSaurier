@@ -1,0 +1,1 @@
+"""Zammad ticket system integration."""

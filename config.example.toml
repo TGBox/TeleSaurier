@@ -1,0 +1,26 @@
+# Kopieren nach ~/.telesaurier/config.toml (Windows: C:\Users\<Name>\.telesaurier\config.toml)
+# oder den Pfad über die Umgebungsvariable TELESAURIER_CONFIG angeben.
+# Ohne Konfigurationsdatei startet TeleSaurier im Testmodus ohne Zammad.
+
+[general]
+# "simulated" = Testmodus, es wird nichts wirklich gefaxt. Der OpenScape-Weg folgt.
+transport = "simulated"
+# data_dir = "~/.telesaurier"
+
+[zammad]
+url = "https://zammad.example.com"
+# Token besser über die Umgebungsvariable TELESAURIER_ZAMMAD_TOKEN setzen.
+token = ""
+# Name des Ticket-Attributs, in dem die Faxnummer des Empfängers steht.
+fax_number_field = "fax_number"
+# Gruppe und Kunde (E-Mail) für Tickets aus eingehenden Faxen.
+inbound_group = "Users"
+inbound_customer = ""
+# Muss mit dem "HMAC SHA1 Signature Token" des Zammad-Webhooks übereinstimmen.
+# Besser über TELESAURIER_WEBHOOK_SECRET setzen.
+webhook_secret = ""
+
+[server]
+host = "127.0.0.1"
+port = 8520
+poll_seconds = 30

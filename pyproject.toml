@@ -6,7 +6,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
 dependencies = [
-    "pyside6>=6.6",
+    "pyside6>=6.8",
 ]
 
 [project.scripts]

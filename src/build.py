@@ -9,11 +9,12 @@ def main() -> None:
         if len(sys.argv) > 1
         else [
             "--noconfirm",
-            "--onedir",
+            "--onefile",
             "--windowed",
             "src/main.py",
             "--name",
             "TeleSaurier",
+            "--icon=./assets/TeleSaurier.ico"
         ]
     )
     PyInstaller.__main__.run(args)

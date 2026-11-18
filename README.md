@@ -3,6 +3,11 @@
 Eine Python Anwendung um Faxe bequem am PC zu versenden und zu empfangen –
 als Desktop-Programm und als Dienst für das Zammad-Ticketsystem.
 
+> **Stand:** Die echten Fax-Wege (FRITZ!Box, Epson) fehlen noch. Bis dahin läuft alles im
+> Testmodus (Weg `simulated`): Es wird **kein Fax wirklich versendet**.
+> Was der MVP können soll und wie es weitergeht, steht in der
+> [MVP-Spezifikation](https://claude.ai/artifact/9THc1Lpu1ki6na1EeJTxRm).
+
 ## Aufbau
 
 ```text
@@ -40,9 +45,21 @@ Webhook-Geheimnis gehören nicht ins Repository; sie lassen sich über
 Alle Daten liegen unter `~/.telesaurier/`.
 
 - Gesendete Faxe landen in `simulated/outbox/`.
-- Eine Nummer, die auf `0000` endet, schlägt absichtlich fehl.
+- Die letzten Ziffern der Nummer bestimmen das Ergebnis: `…0000` schlägt endgültig
+  fehl, `…0001` ist immer besetzt (wird wiederholt, bis die Versuche aufgebraucht
+  sind), `…0002` ist beim ersten Versuch besetzt und geht beim zweiten durch.
 - Eine PDF in `simulated/inbox/` gilt als eingegangenes Fax; der Dateiname
   (ohne `.pdf`) wird als Absendernummer verwendet.
+
+## Funktionen
+
+- **Rückfrage vor dem Senden:** Nummer, Dokument, Seitenzahl und Weg werden vor
+  jedem Versand noch einmal angezeigt.
+- **Automatische Wiederholung:** bei „besetzt“ oder „keine Antwort“ bis zu
+  `max_attempts` Versuche im Abstand von `retry_pause_seconds`.
+- **Sendebericht:** PDF zu jedem abgeschlossenen Ausgang („Sendebericht öffnen“);
+  bei Ticketbezug hängt er an der Notiz im Ticket.
+- **Journal:** alle Ein- und Ausgänge mit Weg, Benutzer und Status.
 
 ## Zammad
 

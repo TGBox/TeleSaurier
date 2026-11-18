@@ -20,13 +20,25 @@ CREATE TABLE IF NOT EXISTS faxes (
     remote_id TEXT,
     origin TEXT,
     route TEXT NOT NULL DEFAULT '',
+    user TEXT NOT NULL DEFAULT '',
+    pages INTEGER NOT NULL DEFAULT 0,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    next_attempt_at TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 )
 """
+# Columns added after the first release: name -> definition, see Journal._migrate.
+_ADDED_COLUMNS = {
+    "route": "TEXT NOT NULL DEFAULT ''",
+    "user": "TEXT NOT NULL DEFAULT ''",
+    "pages": "INTEGER NOT NULL DEFAULT 0",
+    "attempts": "INTEGER NOT NULL DEFAULT 0",
+    "next_attempt_at": "TEXT",
+}
 _COLUMNS = (
     "id, direction, number, document, subject, ticket_id, status, detail, remote_id, "
-    "route, created_at, updated_at"
+    "route, user, pages, attempts, next_attempt_at, created_at, updated_at"
 )
 
 
@@ -46,6 +58,12 @@ def _to_entry(row: sqlite3.Row) -> JournalEntry:
         detail=row["detail"],
         remote_id=row["remote_id"],
         route=row["route"],
+        user=row["user"],
+        pages=row["pages"],
+        attempts=row["attempts"],
+        next_attempt_at=(
+            datetime.fromisoformat(row["next_attempt_at"]) if row["next_attempt_at"] else None
+        ),
         created_at=datetime.fromisoformat(row["created_at"]),
         updated_at=datetime.fromisoformat(row["updated_at"]),
     )
@@ -64,8 +82,9 @@ class Journal:
         """Add columns that databases created by older versions lack."""
         with closing(self._connect()) as conn, conn:
             columns = {row["name"] for row in conn.execute("PRAGMA table_info(faxes)")}
-            if "route" not in columns:
-                conn.execute("ALTER TABLE faxes ADD COLUMN route TEXT NOT NULL DEFAULT ''")
+            for name, definition in _ADDED_COLUMNS.items():
+                if name not in columns:
+                    conn.execute(f"ALTER TABLE faxes ADD COLUMN {name} {definition}")
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self._path, timeout=10)
@@ -92,12 +111,14 @@ class Journal:
         ticket_id: int | None = None,
         remote_id: str | None = None,
         origin: str | None = None,
+        user: str = "",
+        pages: int = 0,
     ) -> JournalEntry:
         now = _now()
         entry_id = self._execute(
             "INSERT INTO faxes (direction, number, document, subject, ticket_id, status, "
-            "remote_id, origin, route, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "remote_id, origin, route, user, pages, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 direction,
                 number,
@@ -108,6 +129,8 @@ class Journal:
                 remote_id,
                 origin,
                 route,
+                user,
+                pages,
                 now,
                 now,
             ),
@@ -115,12 +138,29 @@ class Journal:
         return self.get(entry_id)
 
     def update(
-        self, entry_id: int, status: FaxStatus, detail: str = "", remote_id: str | None = None
+        self,
+        entry_id: int,
+        status: FaxStatus,
+        detail: str = "",
+        *,
+        remote_id: str | None = None,
+        attempts: int | None = None,
+        next_attempt_at: datetime | None = None,
     ) -> JournalEntry:
+        """``remote_id`` and ``attempts`` keep their value when omitted;
+        ``next_attempt_at`` is always overwritten (None clears it)."""
         self._execute(
             "UPDATE faxes SET status = ?, detail = ?, remote_id = COALESCE(?, remote_id), "
-            "updated_at = ? WHERE id = ?",
-            (status, detail, remote_id, _now(), entry_id),
+            "attempts = COALESCE(?, attempts), next_attempt_at = ?, updated_at = ? WHERE id = ?",
+            (
+                status,
+                detail,
+                remote_id,
+                attempts,
+                next_attempt_at.isoformat() if next_attempt_at else None,
+                _now(),
+                entry_id,
+            ),
         )
         return self.get(entry_id)
 

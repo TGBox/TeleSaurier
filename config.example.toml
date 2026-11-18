@@ -12,6 +12,9 @@
 send = ["simulated"]
 # Wege, über die eingehende Faxe abgeholt werden. Geplant: "mailbox" und "folder".
 receive = ["simulated"]
+# Bei "besetzt" oder "keine Antwort": höchstens so viele Versuche, mit dieser Pause dazwischen.
+max_attempts = 3
+retry_pause_seconds = 120
 
 # Jeder Weg kann einen eigenen Abschnitt [fax.<name>] mit seinen Einstellungen haben.
 # [fax.simulated]

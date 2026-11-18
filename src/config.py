@@ -3,6 +3,7 @@
 import os
 import tomllib
 from dataclasses import dataclass, field
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
@@ -32,6 +33,8 @@ class Settings:
     send_routes: tuple[str, ...] = (SIMULATED,)  # first one is the default
     receive_routes: tuple[str, ...] = (SIMULATED,)
     route_options: dict[str, dict[str, Any]] = field(default_factory=dict)
+    max_attempts: int = 3
+    retry_pause_seconds: int = 120
     server_host: str = "127.0.0.1"
     server_port: int = 8520
     poll_seconds: int = 30
@@ -58,6 +61,8 @@ def load_settings(path: Path | None = None) -> Settings:
         send_routes=tuple(fax.get("send", [SIMULATED])),
         receive_routes=tuple(fax.get("receive", [SIMULATED])),
         route_options={name: value for name, value in fax.items() if isinstance(value, dict)},
+        max_attempts=fax.get("max_attempts", 3),
+        retry_pause_seconds=fax.get("retry_pause_seconds", 120),
         server_host=server.get("host", "127.0.0.1"),
         server_port=server.get("port", 8520),
         poll_seconds=server.get("poll_seconds", 30),
@@ -71,4 +76,6 @@ def build_service(settings: Settings) -> FaxService:
         build_senders(settings.send_routes, settings.route_options, settings.data_dir),
         build_receivers(settings.receive_routes, settings.route_options, settings.data_dir),
         settings.data_dir / "documents",
+        max_attempts=settings.max_attempts,
+        retry_pause=timedelta(seconds=settings.retry_pause_seconds),
     )

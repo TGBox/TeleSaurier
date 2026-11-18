@@ -1,9 +1,14 @@
-"""Use cases: send a fax, track its status, collect received faxes."""
+"""Use cases: send a fax, track its status, retry, collect received faxes."""
 
+import getpass
 import shutil
-from dataclasses import replace
+from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import uuid4
+
+from pypdf import PdfReader
+from pypdf.errors import PyPdfError
 
 from src.core.journal import Journal
 from src.core.models import (
@@ -14,15 +19,20 @@ from src.core.models import (
     JournalEntry,
     normalize_fax_number,
 )
+from src.core.report import build_report
+from src.core.text import local_time
+from src.transports import route_label
 from src.transports.base import FaxReceiver, FaxSender
 
 
-def _check_pdf(path: Path) -> None:
+def count_pages(path: Path) -> int:
+    """Number of pages; raises FaxError if the file is missing or not a readable PDF."""
     if not path.is_file():
         raise FaxError(f"Datei nicht gefunden: {path}")
-    with path.open("rb") as handle:
-        if handle.read(5) != b"%PDF-":
-            raise FaxError(f"„{path.name}“ ist keine PDF-Datei.")
+    try:
+        return len(PdfReader(path).pages)
+    except (PyPdfError, ValueError, OSError) as exc:
+        raise FaxError(f"„{path.name}“ ist keine lesbare PDF-Datei.") from exc
 
 
 class FaxService:
@@ -35,6 +45,10 @@ class FaxService:
         senders: dict[str, FaxSender],
         receivers: dict[str, FaxReceiver],
         documents_dir: Path,
+        *,
+        max_attempts: int = 3,
+        retry_pause: timedelta = timedelta(minutes=2),
+        clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         if not senders:
             raise ValueError("Es ist kein Fax-Weg zum Senden konfiguriert.")
@@ -42,6 +56,9 @@ class FaxService:
         self._senders = senders
         self._receivers = receivers
         self._documents_dir = documents_dir
+        self._max_attempts = max_attempts
+        self._retry_pause = retry_pause
+        self._clock = clock
         documents_dir.mkdir(parents=True, exist_ok=True)
 
     @property
@@ -59,7 +76,7 @@ class FaxService:
         if route not in self._senders:
             raise FaxError(f"Der Fax-Weg „{route}“ ist nicht konfiguriert.")
         number = normalize_fax_number(job.recipient)
-        _check_pdf(job.document)
+        pages = count_pages(job.document)
         stored = self._documents_dir / f"{uuid4().hex}.pdf"
         shutil.copyfile(job.document, stored)
         entry = self.journal.add(
@@ -71,26 +88,64 @@ class FaxService:
             subject=job.subject,
             ticket_id=job.ticket_id,
             origin=job.origin,
+            user=job.user or getpass.getuser(),
+            pages=pages,
         )
+        return self._submit(entry)
+
+    def _submit(self, entry: JournalEntry) -> JournalEntry:
+        job = FaxJob(
+            entry.number, entry.document, entry.subject, entry.ticket_id, route=entry.route
+        )
+        attempts = entry.attempts + 1
         try:
-            remote_id = self._senders[route].send(
-                replace(job, recipient=number, document=stored, route=route)
-            )
+            remote_id = self._senders[entry.route].send(job)
         except Exception as exc:  # noqa: BLE001 - any transport error must end up in the journal
-            return self.journal.update(entry.id, FaxStatus.FAILED, str(exc))
-        return self.journal.update(entry.id, FaxStatus.SENDING, remote_id=remote_id)
+            return self.journal.update(entry.id, FaxStatus.FAILED, str(exc), attempts=attempts)
+        return self.journal.update(
+            entry.id, FaxStatus.SENDING, remote_id=remote_id, attempts=attempts
+        )
 
     def refresh(self) -> list[JournalEntry]:
-        """Ask the routes about unfinished faxes; return entries whose status changed."""
+        """Advance unfinished faxes: query their status, schedule and start retries.
+
+        Returns the entries whose status changed.
+        """
         changed = []
         for entry in self.journal.unfinished():
-            sender = self._senders.get(entry.route)
-            if entry.remote_id is None or sender is None:
+            if entry.route not in self._senders:
                 continue
-            status, detail = sender.status(entry.remote_id)
-            if status != entry.status:
-                changed.append(self.journal.update(entry.id, status, detail))
+            if entry.status is FaxStatus.QUEUED:
+                if entry.next_attempt_at and entry.next_attempt_at <= self._clock():
+                    changed.append(self._submit(entry))
+                continue
+            if entry.remote_id is None:
+                continue
+            state = self._senders[entry.route].status(entry.remote_id)
+            if (
+                state.status is FaxStatus.FAILED
+                and state.retryable
+                and entry.attempts < self._max_attempts
+            ):
+                retry_at = self._clock() + self._retry_pause
+                detail = (
+                    f"{state.detail} – Versuch {entry.attempts + 1} von {self._max_attempts} "
+                    f"um {local_time(retry_at)[-5:]} Uhr"
+                )
+                changed.append(
+                    self.journal.update(
+                        entry.id, FaxStatus.QUEUED, detail, next_attempt_at=retry_at
+                    )
+                )
+            elif state.status != entry.status:
+                changed.append(self.journal.update(entry.id, state.status, state.detail))
         return changed
+
+    def report(self, entry: JournalEntry) -> bytes:
+        """Transmission report (PDF) for a finished outbound fax."""
+        if entry.direction is not Direction.OUTBOUND or not entry.status.is_final:
+            raise FaxError("Einen Sendebericht gibt es erst für abgeschlossene Ausgänge.")
+        return build_report(entry, route_label(entry.route))
 
     def poll_inbound(self) -> list[JournalEntry]:
         """Collect newly received faxes from all receive routes; return the new entries."""

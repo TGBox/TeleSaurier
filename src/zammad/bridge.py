@@ -47,18 +47,29 @@ def send_from_webhook(
             path = Path(tmp) / f"{pdf['id']}.pdf"
             try:
                 path.write_bytes(client.download(attachment))
-                entry = service.send(FaxJob(recipient, path, pdf["filename"], ticket_id, origin))
+                job = FaxJob(
+                    recipient, path, pdf["filename"], ticket_id, origin, user=_author(article)
+                )
+                entry = service.send(job)
             except FaxError as exc:
                 client.add_note(ticket_id, _NOT_SENT, f"{pdf['filename']}: {exc}")
                 continue
             entries.append(entry)
             if entry.status is FaxStatus.FAILED:
-                report_result(client, entry)
+                report_result(service, client, entry)
     return entries
 
 
-def report_result(client: ZammadClient, entry: JournalEntry) -> None:
-    """Write the final outcome of a ticket-related fax into the ticket."""
+def _author(article: dict[str, Any]) -> str:
+    """Login of the agent who wrote the article; the payload format varies."""
+    author = article.get("created_by")
+    if isinstance(author, dict):
+        author = author.get("login") or author.get("email")
+    return str(author or "zammad")
+
+
+def report_result(service: FaxService, client: ZammadClient, entry: JournalEntry) -> None:
+    """Write the final outcome of a ticket-related fax into the ticket, report attached."""
     if entry.ticket_id is None or not entry.status.is_final:
         return
     if entry.status is FaxStatus.SENT:
@@ -69,7 +80,8 @@ def report_result(client: ZammadClient, entry: JournalEntry) -> None:
         body = f"„{entry.subject}“ konnte nicht an {entry.number} gefaxt werden."
     if entry.detail:
         body += f"\n{entry.detail}"
-    client.add_note(entry.ticket_id, subject, body)
+    report = (f"sendebericht-{entry.id}.pdf", service.report(entry))
+    client.add_note(entry.ticket_id, subject, body, [report])
 
 
 def inbound_to_ticket(client: ZammadClient, config: ZammadConfig, entry: JournalEntry) -> None:
@@ -86,7 +98,7 @@ def inbound_to_ticket(client: ZammadClient, config: ZammadConfig, entry: Journal
 def sync(service: FaxService, client: ZammadClient, config: ZammadConfig) -> None:
     """One polling round: report finished faxes, turn received faxes into tickets."""
     for entry in service.refresh():
-        _logged(report_result, client, entry)
+        _logged(report_result, service, client, entry)
     for entry in service.poll_inbound():
         _logged(inbound_to_ticket, client, config, entry)
 

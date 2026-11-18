@@ -8,20 +8,25 @@ import threading
 import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from io import BytesIO
 
 import pytest
+from pypdf import PdfReader
 
 from src.config import ZammadConfig
 from src.core.models import FaxError, FaxStatus
 from src.server.app import WEBHOOK_PATH, make_server
 from src.zammad import bridge
 from src.zammad.client import ZammadClient
+from tests.conftest import make_pdf
 
 SECRET = "s3cret"
-PDF = b"%PDF-1.4 from ticket"
+PDF = make_pdf()
+INBOUND = b"%PDF-1.4 inbound"
 ARTICLE = {
     "id": 104,
     "subject": "Bitte faxen",
+    "created_by": {"login": "agent.anna"},
     "attachments": [
         {"id": 174, "filename": "befund.pdf", "preferences": {"Content-Type": "application/pdf"}},
         {"id": 175, "filename": "logo.png", "preferences": {"Content-Type": "image/png"}},
@@ -141,6 +146,12 @@ def test_webhook_faxes_pdf_and_reports_result(webhook, service, client, config, 
     assert path == "/api/v1/ticket_articles"
     assert note["ticket_id"] == 81 and note["internal"] is True
     assert note["subject"] == "TeleSaurier: Fax gesendet"
+    (report,) = note["attachments"]
+    assert report["filename"] == f"sendebericht-{entry.id}.pdf"
+    assert (
+        "030123456" in PdfReader(BytesIO(base64.b64decode(report["data"]))).pages[0].extract_text()
+    )
+    assert service.journal.get(entry.id).user == "agent.anna"
     assert service.journal.get(entry.id).status is FaxStatus.SENT
 
 
@@ -180,14 +191,14 @@ def test_webhook_rejects_malformed_payload(webhook):
 
 
 def test_inbound_fax_becomes_ticket(service, transport, client, config, zammad):
-    (transport.inbox / "+4930987654.pdf").write_bytes(b"%PDF-1.4 inbound")
+    (transport.inbox / "+4930987654.pdf").write_bytes(INBOUND)
     bridge.sync(service, client, config)
     ((path, ticket),) = zammad.posts
     assert path == "/api/v1/tickets"
     assert ticket["title"] == "Fax von +4930987654"
     assert ticket["customer"] == "fax@x.example"
     (attachment,) = ticket["article"]["attachments"]
-    assert base64.b64decode(attachment["data"]) == b"%PDF-1.4 inbound"
+    assert base64.b64decode(attachment["data"]) == INBOUND
 
 
 def test_server_refuses_to_start_without_secret(service, client, zammad):

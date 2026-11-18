@@ -55,6 +55,16 @@ class FaxJob:
     ticket_id: int | None = None
     origin: str | None = None  # where the job came from, e.g. "zammad-article:104"
     route: str | None = None  # name of the send route; None = the configured default
+    user: str | None = None  # who triggered the fax; None = the logged-in OS user
+
+
+@dataclass(frozen=True)
+class SendState:
+    """What a send route reports about a submitted fax."""
+
+    status: FaxStatus
+    detail: str = ""  # human-readable (German)
+    retryable: bool = False  # a FAILED fax that is worth another attempt (busy, no answer)
 
 
 @dataclass(frozen=True)
@@ -79,6 +89,10 @@ class JournalEntry:
     detail: str
     remote_id: str | None
     route: str
+    user: str
+    pages: int
+    attempts: int
+    next_attempt_at: datetime | None
     created_at: datetime
     updated_at: datetime
 

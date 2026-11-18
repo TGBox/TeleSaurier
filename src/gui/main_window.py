@@ -27,15 +27,16 @@ from PySide6.QtWidgets import (
 )
 
 from src.config import Settings
-from src.core.models import FaxError, FaxJob, JournalEntry
-from src.core.service import FaxService
+from src.core.models import FaxError, FaxJob, JournalEntry, normalize_fax_number
+from src.core.service import FaxService, count_pages
+from src.core.text import local_time
 from src.gui import theme
 from src.transports import SIMULATED, route_label
 from src.zammad import bridge
 from src.zammad.client import ZammadClient
 
 REFRESH_MS = 5000
-_COLUMNS = ["Zeit", "Richtung", "Nummer", "Betreff", "Weg", "Status", "Details"]
+_COLUMNS = ["Zeit", "Richtung", "Nummer", "Betreff", "Weg", "Benutzer", "Status", "Details"]
 
 
 class MainWindow(QMainWindow):
@@ -100,6 +101,9 @@ class MainWindow(QMainWindow):
         self._table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self._table.cellDoubleClicked.connect(self._open_entry)
         left.addWidget(self._table)
+        report = QPushButton("Sendebericht öffnen")
+        report.clicked.connect(self._open_report)
+        left.addWidget(report, alignment=Qt.AlignmentFlag.AlignRight)
         left_widget = QWidget()
         left_widget.setLayout(left)
 
@@ -192,9 +196,18 @@ class MainWindow(QMainWindow):
         if not self._document.text():
             self._warn("Bitte zuerst ein PDF-Dokument auswählen.")
             return
+        document = Path(self._document.text())
+        try:
+            number = normalize_fax_number(self._recipient.text())
+            pages = count_pages(document)
+        except FaxError as exc:
+            self._warn(str(exc))
+            return
+        if not self._confirm(number, document, pages):
+            return
         job = FaxJob(
-            self._recipient.text(),
-            Path(self._document.text()),
+            number,
+            document,
             self._subject.text().strip(),
             self._ticket_id,
             route=self._route.currentData(),
@@ -207,6 +220,22 @@ class MainWindow(QMainWindow):
         self._reload_table()
         self.statusBar().showMessage("Fax wurde übergeben.", 5000)
 
+    def _confirm(self, number: str, document: Path, pages: int) -> bool:
+        """Last check before sending: a wrong number cannot be taken back."""
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Question)
+        box.setWindowTitle("Fax senden?")
+        box.setTextFormat(Qt.TextFormat.RichText)
+        box.setText(f"<p>Fax senden an</p><p style='font-size:22pt'><b>{number}</b></p>")
+        box.setInformativeText(
+            f"Dokument: {document.name}\nSeiten: {pages}\nSenden über: {self._route.currentText()}"
+        )
+        send = box.addButton("Senden", QMessageBox.ButtonRole.AcceptRole)
+        cancel = box.addButton("Abbrechen", QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(cancel)
+        box.exec()
+        return box.clickedButton() is send
+
     # --- journal ---------------------------------------------------------
 
     def _refresh(self) -> None:
@@ -215,7 +244,7 @@ class MainWindow(QMainWindow):
         if self._zammad is not None:
             for entry in changed:
                 try:
-                    bridge.report_result(self._zammad, entry)
+                    bridge.report_result(self._service, self._zammad, entry)
                 except FaxError as exc:
                     self.statusBar().showMessage(str(exc), 10000)
         if received:
@@ -228,11 +257,12 @@ class MainWindow(QMainWindow):
         self._table.setRowCount(len(self._entries))
         for row, entry in enumerate(self._entries):
             values = [
-                entry.created_at.astimezone().strftime("%d.%m.%Y %H:%M"),
+                local_time(entry.created_at),
                 entry.direction.label,
                 entry.number,
                 entry.subject,
                 route_label(entry.route),
+                entry.user,
                 entry.status.label,
                 entry.detail,
             ]
@@ -241,6 +271,23 @@ class MainWindow(QMainWindow):
 
     def _open_entry(self, row: int, _column: int) -> None:
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(self._entries[row].document)))
+
+    def _open_report(self) -> None:
+        row = self._table.currentRow()
+        if row < 0:
+            self._warn("Bitte zuerst einen Eintrag im Journal auswählen.")
+            return
+        entry = self._entries[row]
+        try:
+            content = self._service.report(entry)
+        except FaxError as exc:
+            self._warn(str(exc))
+            return
+        folder = self._settings.data_dir / "reports"
+        folder.mkdir(parents=True, exist_ok=True)
+        path = folder / f"sendebericht-{entry.id}.pdf"
+        path.write_bytes(content)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
 
     def _warn(self, message: str) -> None:
         QMessageBox.warning(self, "TeleSaurier", message)

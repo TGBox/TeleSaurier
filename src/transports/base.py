@@ -4,7 +4,7 @@ outbound ones (e.g. send via the box, receive via a mailbox)."""
 
 from typing import Protocol
 
-from src.core.models import FaxJob, FaxStatus, ReceivedFax
+from src.core.models import FaxJob, ReceivedFax, SendState
 
 
 class FaxSender(Protocol):
@@ -12,8 +12,8 @@ class FaxSender(Protocol):
         """Submit the fax and return the backend's id for it. Raise on failure."""
         ...
 
-    def status(self, remote_id: str) -> tuple[FaxStatus, str]:
-        """Return the current status and a human-readable detail (German)."""
+    def status(self, remote_id: str) -> SendState:
+        """Return the current state. Mark busy / no answer as ``retryable``."""
         ...
 
 

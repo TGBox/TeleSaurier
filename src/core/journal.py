@@ -19,13 +19,14 @@ CREATE TABLE IF NOT EXISTS faxes (
     detail TEXT NOT NULL DEFAULT '',
     remote_id TEXT,
     origin TEXT,
+    route TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 )
 """
 _COLUMNS = (
     "id, direction, number, document, subject, ticket_id, status, detail, remote_id, "
-    "created_at, updated_at"
+    "route, created_at, updated_at"
 )
 
 
@@ -44,6 +45,7 @@ def _to_entry(row: sqlite3.Row) -> JournalEntry:
         status=FaxStatus(row["status"]),
         detail=row["detail"],
         remote_id=row["remote_id"],
+        route=row["route"],
         created_at=datetime.fromisoformat(row["created_at"]),
         updated_at=datetime.fromisoformat(row["updated_at"]),
     )
@@ -56,6 +58,14 @@ class Journal:
         self._path = path
         path.parent.mkdir(parents=True, exist_ok=True)
         self._execute(_SCHEMA)
+        self._migrate()
+
+    def _migrate(self) -> None:
+        """Add columns that databases created by older versions lack."""
+        with closing(self._connect()) as conn, conn:
+            columns = {row["name"] for row in conn.execute("PRAGMA table_info(faxes)")}
+            if "route" not in columns:
+                conn.execute("ALTER TABLE faxes ADD COLUMN route TEXT NOT NULL DEFAULT ''")
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self._path, timeout=10)
@@ -76,6 +86,7 @@ class Journal:
         number: str,
         document: Path,
         status: FaxStatus,
+        route: str,
         *,
         subject: str = "",
         ticket_id: int | None = None,
@@ -85,7 +96,8 @@ class Journal:
         now = _now()
         entry_id = self._execute(
             "INSERT INTO faxes (direction, number, document, subject, ticket_id, status, "
-            "remote_id, origin, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "remote_id, origin, route, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 direction,
                 number,
@@ -95,6 +107,7 @@ class Journal:
                 status,
                 remote_id,
                 origin,
+                route,
                 now,
                 now,
             ),

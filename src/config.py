@@ -2,12 +2,13 @@
 
 import os
 import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from src.core.journal import Journal
 from src.core.service import FaxService
-from src.transports import SIMULATED, build_transport
+from src.transports import SIMULATED, build_receivers, build_senders
 
 CONFIG_ENV = "TELESAURIER_CONFIG"
 TOKEN_ENV = "TELESAURIER_ZAMMAD_TOKEN"
@@ -28,7 +29,9 @@ class ZammadConfig:
 @dataclass(frozen=True)
 class Settings:
     data_dir: Path = DEFAULT_DIR
-    transport: str = SIMULATED
+    send_routes: tuple[str, ...] = (SIMULATED,)  # first one is the default
+    receive_routes: tuple[str, ...] = (SIMULATED,)
+    route_options: dict[str, dict[str, Any]] = field(default_factory=dict)
     server_host: str = "127.0.0.1"
     server_port: int = 8520
     poll_seconds: int = 30
@@ -36,11 +39,12 @@ class Settings:
 
 
 def load_settings(path: Path | None = None) -> Settings:
-    """Read the config file; a missing file yields defaults (simulated, no Zammad)."""
+    """Read the config file; a missing file yields defaults (test mode, no Zammad)."""
     path = path or Path(os.environ.get(CONFIG_ENV, DEFAULT_DIR / "config.toml"))
     raw = tomllib.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
     general = raw.get("general", {})
     server = raw.get("server", {})
+    fax = raw.get("fax", {})
     zammad_raw = dict(raw.get("zammad", {}))
     zammad = None
     if zammad_raw.get("url"):
@@ -51,7 +55,9 @@ def load_settings(path: Path | None = None) -> Settings:
         zammad = ZammadConfig(**zammad_raw)
     return Settings(
         data_dir=Path(general.get("data_dir", DEFAULT_DIR)).expanduser(),
-        transport=general.get("transport", SIMULATED),
+        send_routes=tuple(fax.get("send", [SIMULATED])),
+        receive_routes=tuple(fax.get("receive", [SIMULATED])),
+        route_options={name: value for name, value in fax.items() if isinstance(value, dict)},
         server_host=server.get("host", "127.0.0.1"),
         server_port=server.get("port", 8520),
         poll_seconds=server.get("poll_seconds", 30),
@@ -62,6 +68,7 @@ def load_settings(path: Path | None = None) -> Settings:
 def build_service(settings: Settings) -> FaxService:
     return FaxService(
         Journal(settings.data_dir / "journal.sqlite"),
-        build_transport(settings.transport, settings.data_dir),
+        build_senders(settings.send_routes, settings.route_options, settings.data_dir),
+        build_receivers(settings.receive_routes, settings.route_options, settings.data_dir),
         settings.data_dir / "documents",
     )

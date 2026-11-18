@@ -1,7 +1,12 @@
+import sqlite3
+
 import pytest
 
-from src.config import load_settings
+from src.config import build_service, load_settings
+from src.core.journal import Journal
 from src.core.models import Direction, FaxError, FaxJob, FaxStatus, normalize_fax_number
+from src.core.service import FaxService
+from src.transports.simulated import SimulatedTransport
 
 
 @pytest.mark.parametrize(
@@ -88,4 +93,60 @@ def test_load_settings(tmp_path, monkeypatch):
     assert settings.zammad.token == "env"
     assert settings.zammad.fax_number_field == "fax_number"
     assert settings.server_port == 9000
-    assert settings.transport == "simulated"
+    assert settings.send_routes == ("simulated",)
+
+
+def test_routes_come_from_config(tmp_path, pdf):
+    config = tmp_path / "config.toml"
+    config.write_text(
+        f'[general]\ndata_dir = "{(tmp_path / "data").as_posix()}"\n'
+        '[fax]\nsend = ["simulated"]\nreceive = []\n'
+        f'[fax.simulated]\ndir = "{(tmp_path / "sim").as_posix()}"\n'
+    )
+    service = build_service(load_settings(config))
+    entry = service.send(FaxJob("030123456", pdf))
+    assert entry.route == "simulated"
+    assert (tmp_path / "sim" / "outbox" / f"{entry.remote_id}.pdf").exists()
+    (tmp_path / "sim" / "inbox" / "030.pdf").write_bytes(b"%PDF-1.4")
+    assert service.poll_inbound() == []  # no receive route configured
+
+
+def test_unknown_route_in_config_is_rejected(tmp_path):
+    config = tmp_path / "config.toml"
+    config.write_text('[fax]\nsend = ["carrier-pigeon"]\n')
+    with pytest.raises(ValueError, match="carrier-pigeon"):
+        build_service(load_settings(config))
+
+
+def test_send_uses_chosen_route_and_default(tmp_path, pdf, transport):
+    other = SimulatedTransport(tmp_path / "other")
+    service = FaxService(
+        Journal(tmp_path / "j.sqlite"), {"a": transport, "b": other}, {}, tmp_path / "docs"
+    )
+    assert service.send_routes == ["a", "b"]
+    default = service.send(FaxJob("030123456", pdf))
+    chosen = service.send(FaxJob("030123456", pdf, route="b"))
+    assert (default.route, chosen.route) == ("a", "b")
+    assert (other.outbox / f"{chosen.remote_id}.pdf").exists()
+    assert {entry.status for entry in service.refresh()} == {FaxStatus.SENT}
+    with pytest.raises(FaxError):
+        service.send(FaxJob("030123456", pdf, route="nope"))
+
+
+def test_journal_from_older_version_is_migrated(tmp_path):
+    path = tmp_path / "old.sqlite"
+    with sqlite3.connect(path) as conn:
+        conn.execute(
+            "CREATE TABLE faxes (id INTEGER PRIMARY KEY AUTOINCREMENT, direction TEXT NOT NULL, "
+            "number TEXT NOT NULL, document TEXT NOT NULL, subject TEXT NOT NULL DEFAULT '', "
+            "ticket_id INTEGER, status TEXT NOT NULL, detail TEXT NOT NULL DEFAULT '', "
+            "remote_id TEXT, origin TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)"
+        )
+        conn.execute(
+            "INSERT INTO faxes (direction, number, document, status, created_at, updated_at) "
+            "VALUES ('outbound', '030', 'x.pdf', 'sent', '2026-11-17T22:00:00+00:00', "
+            "'2026-11-17T22:00:00+00:00')"
+        )
+    conn.close()
+    (entry,) = Journal(path).entries()
+    assert entry.route == ""

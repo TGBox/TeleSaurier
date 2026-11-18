@@ -3,15 +3,12 @@
 Eine Python Anwendung um Faxe bequem am PC zu versenden und zu empfangen –
 als Desktop-Programm und als Dienst für das Zammad-Ticketsystem.
 
-> **Stand:** Der echte Fax-Weg (OpenScape) fehlt noch. Bis dahin läuft alles im
-> Testmodus (`transport = "simulated"`): Es wird **kein Fax wirklich versendet**.
-
 ## Aufbau
 
 ```text
 src/
 ├── core/         Faxauftrag, Journal (SQLite), Ablauflogik – ohne GUI und ohne Netzwerk
-├── transports/   Fax-Wege: base.py (Schnittstelle), simulated.py (Testmodus)
+├── transports/   Fax-Wege zum Senden und Empfangen, einzeln konfigurierbar
 ├── zammad/       REST-Client und Abläufe Ticket <-> Fax
 ├── server/       Dienst: nimmt Zammad-Webhooks an, meldet Ergebnisse ins Ticket
 ├── gui/          Desktop-Oberfläche (PySide6)
@@ -64,7 +61,20 @@ schreibt das Ergebnis als interne Notiz zurück und legt für eingehende Faxe ei
 neues Ticket an. Notizen von TeleSaurier beginnen mit „TeleSaurier:“ und lösen
 selbst nie ein Fax aus.
 
-## Neuen Fax-Weg ergänzen
+## Fax-Wege
 
-Eine Klasse mit den drei Methoden aus `src/transports/base.py` schreiben und in
-`build_transport` (`src/transports/__init__.py`) eintragen.
+Senden und Empfangen werden in der `config.toml` getrennt eingestellt:
+
+```toml
+[fax]
+send = ["simulated"]      # der erste ist der Standard
+receive = ["simulated"]
+```
+
+Sind mehrere Sendewege eingetragen, bietet die Oberfläche unter „Senden über“
+alle zur Auswahl an. Faxe aus Zammad-Tickets nehmen den Standardweg.
+
+**Neuen Weg ergänzen:** eine Klasse nach `FaxSender` oder `FaxReceiver`
+(`src/transports/base.py`) schreiben und in `SENDERS` bzw. `RECEIVERS` in
+`src/transports/__init__.py` eintragen. Die Einstellungen des Wegs stehen im
+Abschnitt `[fax.<name>]`.

@@ -3,9 +3,19 @@
 # Ohne Konfigurationsdatei startet TeleSaurier im Testmodus ohne Zammad.
 
 [general]
-# "simulated" = Testmodus, es wird nichts wirklich gefaxt. Der OpenScape-Weg folgt.
-transport = "simulated"
 # data_dir = "~/.telesaurier"
+
+[fax]
+# Wege zum Senden; der erste ist der Standard, die Oberfläche bietet alle zur Auswahl an.
+# Bisher gibt es nur "simulated" (Testmodus, es wird nichts wirklich gefaxt).
+# Geplant: "fritzbox" und "epson".
+send = ["simulated"]
+# Wege, über die eingehende Faxe abgeholt werden. Geplant: "mailbox" und "folder".
+receive = ["simulated"]
+
+# Jeder Weg kann einen eigenen Abschnitt [fax.<name>] mit seinen Einstellungen haben.
+# [fax.simulated]
+# dir = "~/.telesaurier/simulated"
 
 [zammad]
 url = "https://zammad.example.com"

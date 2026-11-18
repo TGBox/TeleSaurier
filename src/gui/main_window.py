@@ -3,11 +3,12 @@
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer, QUrl
-from PySide6.QtGui import QDesktopServices, QGuiApplication
+from PySide6.QtGui import QAction, QActionGroup, QDesktopServices, QGuiApplication
 from PySide6.QtPdf import QPdfDocument
 from PySide6.QtPdfWidgets import QPdfView
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QComboBox,
     QFileDialog,
     QFormLayout,
     QHBoxLayout,
@@ -28,12 +29,13 @@ from PySide6.QtWidgets import (
 from src.config import Settings
 from src.core.models import FaxError, FaxJob, JournalEntry
 from src.core.service import FaxService
-from src.transports import SIMULATED
+from src.gui import theme
+from src.transports import SIMULATED, route_label
 from src.zammad import bridge
 from src.zammad.client import ZammadClient
 
 REFRESH_MS = 5000
-_COLUMNS = ["Zeit", "Richtung", "Nummer", "Betreff", "Status", "Details"]
+_COLUMNS = ["Zeit", "Richtung", "Nummer", "Betreff", "Weg", "Status", "Details"]
 
 
 class MainWindow(QMainWindow):
@@ -67,6 +69,9 @@ class MainWindow(QMainWindow):
             self._ticket.setEnabled(False)
             self._ticket.setPlaceholderText("Zammad ist nicht konfiguriert")
             load.setEnabled(False)
+        self._route = QComboBox()
+        for name in service.send_routes:
+            self._route.addItem(route_label(name), name)
         send = QPushButton("Fax senden")
         send.setDefault(True)
         send.clicked.connect(self._send)
@@ -76,10 +81,11 @@ class MainWindow(QMainWindow):
         form.addRow("Betreff:", self._subject)
         form.addRow("Dokument (PDF):", _row(self._document, browse))
         form.addRow("Ticket:", _row(self._ticket, load))
+        form.addRow("Senden über:", self._route)
 
         left = QVBoxLayout()
-        if settings.transport == SIMULATED:
-            banner = QLabel("Testmodus: Faxe werden nur simuliert und nicht wirklich versendet.")
+        if SIMULATED in service.send_routes:
+            banner = QLabel("Testmodus: Über den Weg „Testmodus“ wird nichts wirklich versendet.")
             banner.setStyleSheet("background: #fff3cd; color: #664d03; padding: 6px;")
             banner.setWordWrap(True)
             left.addWidget(banner)
@@ -109,10 +115,23 @@ class MainWindow(QMainWindow):
         splitter.setSizes([620, 480])
         self.setCentralWidget(splitter)
 
+        self._build_appearance_menu()
+
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._refresh)
         self._timer.start(REFRESH_MS)
         self._reload_table()
+
+    def _build_appearance_menu(self) -> None:
+        menu = self.menuBar().addMenu("Ansicht").addMenu("Design")
+        group = QActionGroup(self)
+        current = theme.saved_appearance()
+        for appearance, label in theme.LABELS.items():
+            action = QAction(label, self, checkable=True)
+            action.setChecked(appearance == current)
+            action.triggered.connect(lambda _checked, a=appearance: theme.apply_appearance(a))
+            group.addAction(action)
+            menu.addAction(action)
 
     # --- composing -------------------------------------------------------
 
@@ -178,6 +197,7 @@ class MainWindow(QMainWindow):
             Path(self._document.text()),
             self._subject.text().strip(),
             self._ticket_id,
+            route=self._route.currentData(),
         )
         try:
             self._service.send(job)
@@ -212,6 +232,7 @@ class MainWindow(QMainWindow):
                 entry.direction.label,
                 entry.number,
                 entry.subject,
+                route_label(entry.route),
                 entry.status.label,
                 entry.detail,
             ]

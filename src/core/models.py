@@ -54,6 +54,7 @@ class FaxJob:
     subject: str = ""
     ticket_id: int | None = None
     origin: str | None = None  # where the job came from, e.g. "zammad-article:104"
+    route: str | None = None  # name of the send route; None = the configured default
 
 
 @dataclass(frozen=True)
@@ -77,6 +78,7 @@ class JournalEntry:
     status: FaxStatus
     detail: str
     remote_id: str | None
+    route: str
     created_at: datetime
     updated_at: datetime
 

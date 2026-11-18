@@ -21,4 +21,9 @@ def transport(tmp_path: Path) -> SimulatedTransport:
 
 @pytest.fixture
 def service(tmp_path: Path, transport: SimulatedTransport) -> FaxService:
-    return FaxService(Journal(tmp_path / "journal.sqlite"), transport, tmp_path / "documents")
+    return FaxService(
+        Journal(tmp_path / "journal.sqlite"),
+        {"simulated": transport},
+        {"simulated": transport},
+        tmp_path / "documents",
+    )
